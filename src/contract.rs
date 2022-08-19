@@ -4,7 +4,7 @@ use cosmwasm_std::{to_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response,
 use cw2::set_contract_version;
 
 use crate::error::ContractError;
-use crate::msg::{CountResponse, ExecuteMsg, InstantiateMsg, QueryMsg};
+use crate::msg::{CountResponse, ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg};
 use crate::state::{State, STATE};
 
 // version info for migration info
@@ -24,7 +24,6 @@ pub fn instantiate(
     };
 
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-
     STATE.save(deps.storage, &initial_state)?;
 
     Ok(Response::new()
@@ -37,59 +36,35 @@ pub fn instantiate(
 pub fn execute(
     deps: DepsMut,
     _env: Env,
-    info: MessageInfo,
+    _info: MessageInfo,
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::Increment {} => increment(deps, info),
-        ExecuteMsg::Set { count } => set(deps, info, count),
+        ExecuteMsg::Increment {} => increment(deps),
+        ExecuteMsg::Set { count } => set(deps, count),
     }
 }
 
-pub fn increment(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
-    let storage = STATE.may_load(deps.storage)?;
+pub fn increment(deps: DepsMut) -> Result<Response, ContractError> {
+    let mut state = STATE.load(deps.storage)?;
+    state.count += 1;
+    STATE.save(deps.storage, &state)?;
 
-    match storage {
-        Some(mut state) => {
-            if info.sender != state.owner {
-                return Err(ContractError::CustomError {
-                    val: "Sender is not owner!".to_string(),
-                });
-            }
-            state.count += 1;
-            STATE.save(deps.storage, &state)?;
-            Ok(Response::new()
-                .add_attribute("method", "increment")
-                .add_attribute("owner", state.owner.to_string())
-                .add_attribute("count", state.count.to_string()))
-        }
-        None => Err(ContractError::CustomError {
-            val: "Can not get state!".to_string(),
-        }),
-    }
+    Ok(Response::new()
+        .add_attribute("method", "increment")
+        .add_attribute("owner", state.owner.to_string())
+        .add_attribute("count", state.count.to_string()))
 }
 
-pub fn set(deps: DepsMut, info: MessageInfo, count: u8) -> Result<Response, ContractError> {
-    let storage = STATE.may_load(deps.storage)?;
+pub fn set(deps: DepsMut, count: u8) -> Result<Response, ContractError> {
+    let mut state = STATE.load(deps.storage)?;
+    state.count = count;
+    STATE.save(deps.storage, &state)?;
 
-    match storage {
-        Some(mut state) => {
-            if info.sender != state.owner {
-                return Err(ContractError::CustomError {
-                    val: "Sender is not owner!".to_string(),
-                });
-            }
-            state.count = count;
-            STATE.save(deps.storage, &state)?;
-            Ok(Response::new()
-                .add_attribute("method", "set")
-                .add_attribute("owner", state.owner.to_string())
-                .add_attribute("count", state.count.to_string()))
-        }
-        None => Err(ContractError::CustomError {
-            val: "Can not get state!".to_string(),
-        }),
-    }
+    Ok(Response::new()
+        .add_attribute("method", "set")
+        .add_attribute("owner", state.owner.to_string())
+        .add_attribute("count", state.count.to_string()))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -105,6 +80,13 @@ pub fn query_state(deps: Deps) -> StdResult<Binary> {
     to_binary(&CountResponse { count: state.count })
 }
 
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn migrate(_deps: DepsMut, _env: Env, _msg: MigrateMsg) -> StdResult<Response> {
+    Ok(Response::new()
+        .add_attribute("method", "migrate")
+        .add_attribute("version", CONTRACT_VERSION))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::contract::{execute, instantiate, query};
@@ -115,8 +97,7 @@ mod tests {
     };
     use cosmwasm_std::{attr, from_binary, Empty, Env, MessageInfo, OwnedDeps, Response};
 
-    pub const ADDR1: &str = "addr1";
-    pub const ADDR2: &str = "addr2";
+    pub const ALICE_ADDR: &str = "juno1gjqnuhv52pd2a7ets2vhw9w9qa9knyhyqd4qeg";
 
     type Instance = (
         OwnedDeps<MockStorage, MockApi, MockQuerier, Empty>,
@@ -137,13 +118,13 @@ mod tests {
 
     #[test]
     fn test_init() {
-        let (_, _, _, res) = get_instance(42, ADDR1);
+        let (_, _, _, res) = get_instance(42, ALICE_ADDR);
 
         assert_eq!(
             res.unwrap().attributes,
             vec![
                 attr("method", "instantiate"),
-                attr("owner", ADDR1.to_string()),
+                attr("owner", ALICE_ADDR.to_string()),
                 attr("count", "42")
             ]
         )
@@ -151,7 +132,7 @@ mod tests {
 
     #[test]
     fn test_increment() {
-        let (mut deps, env, info, _) = get_instance(42, ADDR1);
+        let (mut deps, env, info, _) = get_instance(42, ALICE_ADDR);
         let msg = ExecuteMsg::Increment {};
         let inc_res = execute(deps.as_mut(), env, info, msg);
 
@@ -159,7 +140,7 @@ mod tests {
             inc_res.unwrap().attributes,
             vec![
                 attr("method", "increment"),
-                attr("owner", ADDR1.to_string()),
+                attr("owner", ALICE_ADDR.to_string()),
                 attr("count", "43")
             ]
         )
@@ -167,7 +148,7 @@ mod tests {
 
     #[test]
     fn test_set() {
-        let (mut deps, env, info, _) = get_instance(42, ADDR1);
+        let (mut deps, env, info, _) = get_instance(42, ALICE_ADDR);
         let msg = ExecuteMsg::Set { count: 45 };
         let set_res = execute(deps.as_mut(), env, info, msg);
 
@@ -175,35 +156,15 @@ mod tests {
             set_res.unwrap().attributes,
             vec![
                 attr("method", "set"),
-                attr("owner", ADDR1.to_string()),
+                attr("owner", ALICE_ADDR.to_string()),
                 attr("count", "45")
             ]
         )
     }
 
     #[test]
-    fn test_increment_wrong_addr() {
-        let (mut deps, env, _, _) = get_instance(42, ADDR1);
-        let msg = ExecuteMsg::Increment {};
-        let info = mock_info(ADDR2, &[]);
-        let res = execute(deps.as_mut(), env, info, msg);
-
-        res.unwrap_err();
-    }
-
-    #[test]
-    fn test_set_wrong_addr() {
-        let (mut deps, env, _, _) = get_instance(42, ADDR1);
-        let msg = ExecuteMsg::Set { count: 45 };
-        let info = mock_info(ADDR2, &[]);
-        let res = execute(deps.as_mut(), env, info, msg);
-
-        res.unwrap_err();
-    }
-
-    #[test]
     fn test_query() {
-        let (deps, env, _, _) = get_instance(42, ADDR1);
+        let (deps, env, _, _) = get_instance(42, ALICE_ADDR);
         let msg = QueryMsg::GetCount {};
         let bin = query(deps.as_ref(), env, msg).unwrap();
         let res = from_binary::<CountResponse>(&bin).unwrap();

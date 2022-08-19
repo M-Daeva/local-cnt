@@ -20,14 +20,13 @@ fi
 # # you must manually import all accounts from mnemonic via
 # # junod keys add $user --recover
 # # check your .juno folder for account records
-# CONTRACT_CODE=$(junod tx wasm store $WASM --from alice $TXFLAG --output json | jq -r '.logs[0].events[-1].attributes[0].value')
-# echo contract code is $CONTRACT_CODE
+CONTRACT_CODE=$(junod tx wasm store $WASM --from alice $TXFLAG --output json | jq -r '.logs[0].events[-1].attributes[0].value')
+echo contract code is $CONTRACT_CODE
 
 #---------- SMART CONTRACT INTERACTION ------------------------
-CONTRACT_CODE=2624
-CONTRACT_ADDRESS="juno1vq33w9h984fkqz7atznxpf64wfxt3f0ax0varl5untpeuh2xushs2sugykv"
+
 # instantiate smart contract
-INIT='{"count":255}'
+INIT='{"count":5}'
 junod tx wasm instantiate $CONTRACT_CODE "$INIT" --from "alice" --label "my first contract" $TXFLAG --no-admin
 
 # get smart contract address
